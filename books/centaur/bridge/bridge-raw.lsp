@@ -27,8 +27,104 @@
 ;   DEALINGS IN THE SOFTWARE.
 ;
 ; Original author: Jared Davis <jared@centtech.com>
+; SBCL integration: Karthik Nukala <nukala@kestrel.edu>
 
 (in-package "BRIDGE")
+;; (asdf:load-system "usocket")
+
+; SBCL porting macros ------------------------------------------------------
+
+#+sbcl (require 'sb-bsd-sockets)
+
+(defmacro process-thread-name (&rest body)
+  `(#+ccl ccl::process-name #+sbcl sb-thread:thread-name
+          ,@body))
+
+(defconstant current-process-thread
+  #+ccl ccl::*current-process* #+sbcl sb-thread:*current-thread*)
+
+
+(defmacro without-interrupts (&rest body)
+  `(#+ccl ccl::without-interrupts #+sb-sys:without-interrupts
+          ,@body))
+
+#+sbcl (defun %check-generic-sequence-bounds (seq start end)
+  (let ((length (sb-sequence:length seq)))
+    (if (<= 0 start (or end length) length)
+        (or end length)
+      (sequence-bounding-indices-bad-error seq start end))))
+
+(defmacro check-sequence-bounds (&rest body)
+  `(#+ccl ccl::check-sequence-bounds #+sbcl %check-generic-sequence-bounds
+          ,@body))
+
+(defmacro accept-socket (&rest body)
+  `(#+ccl ccl::accept-connection #+sbcl sb-bsd-sockets:socket-accept
+          ,@body))
+
+(defmacro close-socket (&rest body)
+  `(#+ccl ccl::close #+sbcl sb-bsd-sockets:socket-close
+          ,@body))
+
+(defmacro make-mutex-lock (&rest body)
+  #+ccl `(ccl::make-lock ,@body)
+  #+sbcl `(sb-thread:make-mutex :name ,@body))
+
+(defmacro make-semaphore ()
+  #+ccl `(ccl::make-semaphore)
+  #+sbcl `(sb-thread:make-semaphore :count 0))
+
+(defmacro wait-on-semaphore (&rest body)
+  #+ccl `(ccl::wait-on-semaphore ,@body)
+  #+sbcl `(sb-thread:wait-on-semaphore ,@body :n 1))
+
+(defmacro signal-semaphore (&rest body)
+  `(#+ccl ccl::signal-semaphore #+sbcl sb-thread:signal-semaphore
+          ,@body))
+
+(defmacro with-mutex-lock (&rest body)
+  `(#+ccl ccl::with-lock-grabbed #+sbcl sb-thread:with-mutex
+          ,@body))
+
+(defmacro release-mutex-lock (&rest body)
+  `(#+ccl ccl::release-lock #+sbcl sb-thread:release-mutex
+          ,@body))
+
+(defmacro getenv (&rest body)
+  `(#+ccl ccl::getenv #+sbcl sb-ext:posix-getenv
+          ,@body))
+
+(defmacro make-socket-stream (&rest body)
+  `(#+ccl ccl::make-socket #+sbcl sb-bsd-sockets:socket-make-stream
+          ,@body))
+
+(defmacro all-threads-processes (&rest body)
+  `(#+ccl ccl::all-processes #+sbcl sb-thread:list-all-threads
+          ,@body))
+
+(defmacro interrupt-thread-process (&rest body)
+  `(#+ccl ccl::process-interrupt #+sbcl sb-thread:interrupt-thread
+          ,@body))
+
+(defmacro kill-thread-process (&rest body)
+  `(#+ccl ccl::process-kill #+sbcl sb-thread:terminate-thread
+          ,@body))
+
+(defmacro try-mutex-lock (&rest body)
+  #+ccl `(ccl::try-lock ,@body)
+  #+sbcl `(sb-thread:grab-mutex ,@body :waitp nil))
+
+#+sbcl
+(defun sbcl-find-thread (id)
+  (let* ((all-threads (sb-thread:list-all-threads)))
+    (find id all-threads
+	  :key #'(lambda (p)
+		   (sb-thread:thread-name p))
+	  :test #'equal)))
+
+(defmacro find-thread-process (&rest body)
+  `(#+ccl ccl::find-process #+sbcl sbcl-find-thread
+          ,@body))
 
 (defun sleep$ (n)
   (sleep n))
@@ -36,39 +132,26 @@
 (defconstant bridge-default-port 55433)
 
 (defmacro debug (msg &rest args)
-  nil
-  ;; For hacking on the bridge, uncomment this to watch what's happening.
-  ;; `(format *terminal-io*
-  ;;         (concatenate 'string "Bridge: ~a: " ,msg)
-  ;;         (ccl::process-name ccl::*current-process*)
-  ;;         . ,args)
+  ;;  nil
+  ;;  For hacking on the bridge, uncomment this to watch what's happening.
+  `(format *terminal-io*
+           (concatenate 'string "Bridge: ~a: " ,msg)
+           (process-thread-name current-process-thread)
+           . ,args)
   )
 
 (defmacro alert (msg &rest args)
   ;; This is only used for bridge messages that are unusual.
   `(format *terminal-io*
            (concatenate 'string "Bridge: ~a: " ,msg)
-           (ccl::process-name ccl::*current-process*)
+           ;; (ccl::process-name ccl::*current-process*)
+           (process-thread-name current-process-thread)
            . ,args))
 
 ; Writing Messages -----------------------------------------------------------
 
 ; We write an output stream class for wrapping up ordinary printed output
-; (e.g., from things like FORMAT, CW, etc.) into messages.  This lets us send
-; all output to the client in a uniform way.
-
-(defun send-message (type content stream)
-  ;; Basic routine for sending strings as messages.  This gets used for error
-  ;; messages and sending results (after encoding them as json), but not for
-  ;; output.
-  (declare (type string type content))
-  (debug "Send plain message on ~a: ~a~%" type content)
-  (ccl::without-interrupts (write-string type stream)
-                           (write-char #\Space stream)
-                           (prin1 (length content) stream)
-                           (write-char #\Newline stream)
-                           (write-string content stream)
-                           (write-char #\Newline stream)))
+; (e.g., from things like FOR
 
 (defclass bridge-ostream (cl-user::fundamental-character-output-stream)
   ;; Special output stream that gets used to distinguish different kinds of
@@ -103,7 +186,7 @@
 (defmethod cl-user::stream-write-char ((self bridge-ostream) c)
   (let ((stream (stream-of self)))
     (debug "Send char message on ~a: ~a~%" (name-of self) (if (eql c #\Newline) "[Newline]" c))
-    (ccl::without-interrupts
+    (without-interrupts
      (write-string (name-of self) stream)
      (write-char #\Space stream)
      (write-char #\1 stream)
@@ -115,14 +198,14 @@
 (defun ugly-string-length-computation (str start end)
   ;; Ugly thing copied from CCL's generic-stream-write-string.  I don't really
   ;; know what this does.  Somethign to deal with fill pointers or something?
-  (setq end (ccl::check-sequence-bounds str start end))
+  (setq end (check-sequence-bounds str start end))
   (- end start))
 
 (defmethod cl-user::stream-write-string ((self bridge-ostream) str &optional (start 0) end)
   (let ((stream (stream-of self))
         (n      (ugly-string-length-computation str start end)))
     (debug "Send str message on ~a: ~a~%" (name-of self) (subseq str start end))
-    (ccl::without-interrupts
+    (without-interrupts
      (write-string (name-of self) stream)
      (write-char #\Space stream)
      (prin1 n stream)
@@ -168,9 +251,10 @@
 
 ; Reading Commands ------------------------------------------------------------
 
-(defconstant eof
-  ;; Special constant to denote end of file
-  (cons :eof :eof))
+#+ccl (defconstant eof
+        ;; Special constant to denote end of file
+        (cons :eof :eof))
+
 
 (defun substring-number-p (str &key (start '0) end)
   (declare (string str)
@@ -452,7 +536,8 @@ This is a trace-co test"))
                                             :stream stream
                                             :name "STDOUT")))
      (with-output-to ostream
-                     (send-message "ACL2_BRIDGE_HELLO" (ccl::process-name ccl::*current-process*) stream)
+       (send-message "ACL2_BRIDGE_HELLO"
+                     (process-thread-name current-process-thread) stream)
                      (loop while (worker-do-work stream))
                      (close stream)))
    (error (condition)
@@ -478,17 +563,18 @@ This is a trace-co test"))
   (debug "Sock is ~a~%" sock)
   (unwind-protect
       (loop for n from 0 do
-            (let* ((stream      (ccl::accept-connection sock))
+            (let* ((stream      (accept-socket sock))
                    (worker-name (cl-user::format nil "bridge-worker-~a" n)))
               (debug "Got connection.~%")
-              (ccl::process-run-function (list :name worker-name
-                                               :stack-size *worker-stack-size*
-                                               :vstack-size *worker-vstack-size*
-                                               :tstack-size *worker-tstack-size*)
-                                         'worker-thread stream)))
+              #+ccl (ccl::process-run-function (list :name worker-name
+                                                     :stack-size *worker-stack-size*
+                                                     :vstack-size *worker-vstack-size*
+                                                     :tstack-size *worker-tstack-size*)
+                                               'worker-thread stream)
+              #+sbcl (sb-thread:make-thread 'worker-thread :name worker-name :arguments stream)))
     (progn
       (alert "Forcibly closing ACL2-Bridge socket!")
-      (ccl::close sock :abort t)))
+      (close-socket sock :abort t)))
   (format t "; ACL2 Bridge: Listener thread exiting~%"))
 
 
@@ -504,9 +590,9 @@ This is a trace-co test"))
 ; not at all thread safe, and you can't even try to run a memoized computation
 ; from another thread.
 
-(defvar *main-thread-lock* (ccl::make-lock '*main-thread-lock*))
+(defvar *main-thread-lock* (make-mutex-lock "*main-thread-lock*"))
 (defvar *main-thread-work* nil)
-(defvar *main-thread-ready* (ccl::make-semaphore))
+(defvar *main-thread-ready* (make-semaphore))
 
 (defun main-thread-loop ()
   (loop do
@@ -514,7 +600,7 @@ This is a trace-co test"))
         ;; the work that gets added by IN-MAIN-THREAD-AUX should properly send
         ;; any errors out to the worker thread.
         (debug "Main thread waiting for work.~%")
-        (ccl::wait-on-semaphore *main-thread-ready*)
+        (wait-on-semaphore *main-thread-ready*)
         (debug "Main thread got work.~%")
         (let ((work *main-thread-work*))
           (setq *main-thread-work* nil)
@@ -557,7 +643,7 @@ This is a trace-co test"))
         (saved-stdout (gensym))
         (saved-stdco  (gensym))
         (work         (gensym)))
-    `(let* ((,done         (ccl::make-semaphore))
+    `(let* ((,done         (make-semaphore))
             (,retvals      nil)
             (,finished     nil)
             (,errval       nil)
@@ -595,13 +681,13 @@ This is a trace-co test"))
                        (return-from try-to-run-it nil)))
 
                    (debug "Main thread waking up the worker.~%")
-                   (ccl::signal-semaphore ,done)
+                   (signal-semaphore ,done)
                    (debug "Main thread is all done.~%"))))))
        (debug "Installing work for main thread.~%")
        (setq *main-thread-work* ,work)              ;; Install work for main to find
-       (ccl::signal-semaphore *main-thread-ready*)  ;; Tell main work is there for him
+       (signal-semaphore *main-thread-ready*)  ;; Tell main work is there for him
        (debug "Waiting for main thread to finish.~%")
-       (ccl::wait-on-semaphore ,done)               ;; Wait until main is done
+       (wait-on-semaphore ,done)               ;; Wait until main is done
        (when ,errval
          (debug "Got error from the main thread.~%")
          (error ,errval))               ;; Transparently propagate errors
@@ -621,7 +707,7 @@ This is a trace-co test"))
   ;; But it seems to work on CCL, at least.
   `(if *no-main-thread*
        ,form
-     (ccl::with-lock-grabbed
+     (with-mutex-lock
       (*main-thread-lock*)
       (debug "Got the lock, now in main thread.~%")
       (in-main-thread-aux ,form))))
@@ -632,7 +718,7 @@ This is a trace-co test"))
   ;; But it seems to work on CCL, at least.
   `(cond (*no-main-thread*
           ,form)
-         ((not (ccl::try-lock *main-thread-lock*))
+         ((not (try-mutex-lock *main-thread-lock*))
           (progn
             (debug "The main thread is busy, giving up.~%")
             (error "The main thread is busy.")))
@@ -643,7 +729,7 @@ This is a trace-co test"))
                 (debug "Main thread wasn't busy, so it's my turn.~%")
                 (in-main-thread-aux ,form))
             (debug "Releasing lock on main thread.~%")
-            (ccl::release-lock *main-thread-lock*)))))
+            (release-mutex-lock *main-thread-lock*)))))
 
 
 (defun start-fn (socket-name-or-port-number
@@ -657,16 +743,16 @@ This is a trace-co test"))
   (unless socket-name-or-port-number
     (setq socket-name-or-port-number bridge-default-port))
   (format t "Starting ACL2 Bridge on ~a, ~a~%"
-          (ccl::getenv "HOSTNAME")
+          (getenv "HOSTNAME")
           socket-name-or-port-number)
   (let ((sock (cond ((natp socket-name-or-port-number)
-                     (ccl::make-socket :connect :passive
-                                       :local-port socket-name-or-port-number
-                                       :reuse-address t))
+                     (make-socket-stream :connect :passive
+                                         :local-port socket-name-or-port-number
+                                         :reuse-address t))
                     ((stringp socket-name-or-port-number)
-                     (ccl::make-socket :address-family :file
-                                       :connect :passive
-                                       :local-filename socket-name-or-port-number))
+                     (make-socket-stream :address-family :file
+                                         :connect :passive
+                                         :local-filename socket-name-or-port-number))
                     (t
                      (er hard? 'start-fn "Expected socket-name-or-port-number ~
                                           to be a string (for a socket name) ~
@@ -674,14 +760,15 @@ This is a trace-co test"))
                                           port), but found ~x0."
                          socket-name-or-port-number)))))
     (debug "Sock is ~a~%" sock)
-    (ccl::process-run-function (list :name "bridge-listener"
-                                     ;; These are the sizes for the listener,
-                                     ;; not the workers.  It shouldn't need
-                                     ;; much at all.
-                                     :stack-size  (* 2 (expt 2 20))
-                                     :vstack-size (* 2 (expt 2 20))
-                                     :tstack-size (* 2 (expt 2 20)))
-                               'listener-thread sock))
+    #+ccl (ccl::process-run-function (list :name "bridge-listener"
+                                           ;; These are the sizes for the listener,
+                                           ;; not the workers.  It shouldn't need
+                                           ;; much at all.
+                                           :stack-size  (* 2 (expt 2 20))
+                                           :vstack-size (* 2 (expt 2 20))
+                                           :tstack-size (* 2 (expt 2 20)))
+                                     'listener-thread sock)
+    #+sbcl (sb-thread:make-thread 'listener-thread :name "bridge-listener" :arguments sock))
   (main-thread-loop)
   nil)
 
@@ -690,38 +777,38 @@ This is a trace-co test"))
 ; This is a work in progress.  Probably not ready for production.
 
 (defun find-process (name)
-  (loop for p in (ccl::all-processes) do
-        (if (equal (ccl::process-name p) name)
+  (loop for p in (all-threads-processes) do
+        (if (equal (process-thread-name p) name)
             (return-from find-process p)
           nil)))
 
 (defun interrupt (name)
   (let ((process (bridge::find-process name)))
     (unless process
-      (format *terminal-io* "~a: Can't interrupt ~a, process not found.\n" 
-              (ccl::process-name ccl::*current-process*)
+      (format *terminal-io* "~a: Can't interrupt ~a, process not found.\n"
+              (process-thread-name current-process-thread)
               name)
       ;(format t "Can't interrupt ~a, process not found.\n" name)
       (return-from interrupt nil))
-    (ccl::process-interrupt process
-                            (lambda () (error "bridge interrupt")))))
+    (interrupt-thread-process process
+                              (lambda () (error "bridge interrupt")))))
 
 
 (defun kill-workers ()
-  (loop for p in (ccl::all-processes) do
-        (when (str::strprefixp "bridge-worker-" (ccl::process-name p))
+  (loop for p in (all-threads-processes) do
+        (when (str::strprefixp "bridge-worker-" (process-thread-name p))
           (format t "Killing ~a~%" p)
-          (ccl::process-kill p))))
+          (process-thread-kill p))))
 
 (defun stop ()
-  (cl-user::format t "; bridge::stop:  Current processes: ~a~%" (ccl::all-processes))
-  (let ((listener (ccl::find-process "bridge-listener")))
+  (cl-user::format t "; bridge::stop:  Current processes: ~a~%" (all-threads-processes))
+  (let ((listener (find-thread-process "bridge-listener")))
     (when listener
       (cl-user::format t "Killing ~a~%" listener)
-      (ccl::process-kill listener)))
+      (process-thread-kill listener)))
   (kill-workers)
   ;; Very inelegant: just sleep a couple of seconds to try to give the threads
   ;; time to die.
   (sleep 2)
   (cl-user::format t "; bridge::stop done.~%New processes: ~a~%"
-                   (ccl::all-processes)))
+                   (all-threads-processes)))
