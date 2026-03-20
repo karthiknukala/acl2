@@ -23,6 +23,7 @@
                         ''t
                         :backend :yices2
                         :yices2-timeout-secs 10
+                        :check-vars nil
                         :initial-rule-sets nil
                         :types :bytes
                         :max-conflicts nil))

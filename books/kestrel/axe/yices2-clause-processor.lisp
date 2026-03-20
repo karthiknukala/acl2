@@ -12,6 +12,8 @@
 
 (include-book "prove-with-yices2")
 
+(set-verify-guards-eagerness 0)
+
 (defund yices2-clause-processor (clause hint state)
   (declare (xargs :guard (and (pseudo-term-listp clause)
                               (symbol-alistp hint))
@@ -87,3 +89,5 @@
                                                     (must-prove 't)
                                                     (print ':brief))
   (defthm-with-yices2-clause-processor-fn name term must-prove timeout-secs counterexample print rule-classes))
+
+(set-verify-guards-eagerness 2)

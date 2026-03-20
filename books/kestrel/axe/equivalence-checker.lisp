@@ -12101,7 +12101,8 @@
                               (print-levelp print) ; tighten?
                               (or (null max-conflicts) (natp max-conflicts))
                               (symbolp miter-name))
-                  :stobjs state))
+                  :stobjs state
+                  :verify-guards nil))
   ;; todo: do more, like rewriting the (top node of) the equality
   (b* ((- (and (print-level-at-least-tp print)
                (b* (;;(- (and print (cw "(Subdag that supports the nodes:~%")))
@@ -12118,7 +12119,7 @@
                     ;; (- (cw "(Vars that support both nodes: ~x0.)~%" vars-that-support-both-nodes))
                     (- (and vars-that-support-only-smaller-node (cw "(Vars that support node ~x0 only: ~x1.)~%" smaller-nodenum vars-that-support-only-smaller-node)))
                     (- (and vars-that-support-only-larger-node (cw "(Vars that support node ~x0 only: ~x1.)~%" larger-nodenum vars-that-support-only-larger-node))))
-                 nil))
+                 nil)))
        (backend (get-equivalence-checker-backend options)))
     (if (eq :yices2 backend)
         (try-to-prove-pure-nodes-equal-with-yices2 smaller-nodenum larger-nodenum
@@ -12160,7 +12161,8 @@
                               (or (null max-conflicts) (natp max-conflicts))
                               (symbolp miter-name))
 ;                  :mode :program ; todo: because we call simplify-tree-and-add-to-dag-wrapper (try the basic rewriter?)
-                  :stobjs state)
+                  :stobjs state
+                  :verify-guards nil)
            ;; (ignore assumptions interpreted-function-alist rewriter-rule-alist monitored-symbols)
            )
   (b* (
