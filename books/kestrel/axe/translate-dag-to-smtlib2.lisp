@@ -19,6 +19,7 @@
 (include-book "kestrel/file-io-light/read-objects-from-file-with-pkg" :dir :system)
 (include-book "kestrel/strings-light/parse-decimal-digits" :dir :system)
 (local (include-book "kestrel/lists-light/len" :dir :system))
+(set-verify-guards-eagerness 0)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -97,6 +98,81 @@
 (verify-guards smtlib2-store)
 (verify-guards smtlib2-space-separate)
 
+(local
+  (defthm string-treep-of-smtlib2-call-args
+    (implies (string-treep args)
+             (string-treep (smtlib2-call-args args)))
+    :hints (("Goal" :in-theory (enable smtlib2-call-args)))))
+
+(local
+  (defthm string-treep-of-smtlib2-call
+    (implies (and (stringp op)
+                  (string-treep args))
+             (string-treep (smtlib2-call op args)))
+    :hints (("Goal" :in-theory (enable smtlib2-call smtlib2-call-args)))))
+
+(local
+  (defthm string-treep-of-smtlib2-let1
+    (implies (and (string-treep var)
+                  (string-treep expr)
+                  (string-treep body))
+             (string-treep (smtlib2-let1 var expr body)))
+    :hints (("Goal" :in-theory (enable smtlib2-let1)))))
+
+(local
+  (defthm string-treep-of-smtlib2-extract
+    (implies (string-treep expr)
+             (string-treep (smtlib2-extract high low expr)))
+    :hints (("Goal" :in-theory (enable smtlib2-extract)))))
+
+(local
+  (defthm string-treep-of-smtlib2-sign-extend
+    (implies (string-treep expr)
+             (string-treep (smtlib2-sign-extend extra-bits expr)))
+    :hints (("Goal" :in-theory (enable smtlib2-sign-extend)))))
+
+(local
+  (defthm string-treep-of-smtlib2-bool-not
+    (implies (string-treep arg)
+             (string-treep (smtlib2-bool-not arg)))
+    :hints (("Goal" :in-theory (enable smtlib2-bool-not)))))
+
+(local
+  (defthm string-treep-of-smtlib2-eq
+    (implies (and (string-treep lhs)
+                  (string-treep rhs))
+             (string-treep (smtlib2-eq lhs rhs)))
+    :hints (("Goal" :in-theory (enable smtlib2-eq)))))
+
+(local
+  (defthm string-treep-of-smtlib2-ite
+    (implies (and (string-treep test)
+                  (string-treep then-branch)
+                  (string-treep else-branch))
+             (string-treep (smtlib2-ite test then-branch else-branch)))
+    :hints (("Goal" :in-theory (enable smtlib2-ite)))))
+
+(local
+  (defthm string-treep-of-smtlib2-store
+    (implies (and (string-treep array)
+                  (string-treep index)
+                  (string-treep value))
+             (string-treep (smtlib2-store array index value)))
+    :hints (("Goal" :in-theory (enable smtlib2-store)))))
+
+(local
+  (defthm string-treep-of-smtlib2-select
+    (implies (and (string-treep array)
+                  (string-treep index))
+             (string-treep (smtlib2-select array index)))
+    :hints (("Goal" :in-theory (enable smtlib2-select smtlib2-call smtlib2-call-args)))))
+
+(local
+  (defthm string-treep-of-smtlib2-space-separate
+    (implies (string-treep items)
+             (string-treep (smtlib2-space-separate items)))
+    :hints (("Goal" :in-theory (enable smtlib2-space-separate)))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defund translate-bv-constant-to-smtlib2-aux (val topbit)
@@ -110,6 +186,11 @@
       nil
     (cons (if (logbitp topbit val) "1" "0")
           (translate-bv-constant-to-smtlib2-aux val (+ -1 topbit)))))
+
+(local
+  (defthm string-treep-of-translate-bv-constant-to-smtlib2-aux
+    (string-treep (translate-bv-constant-to-smtlib2-aux val topbit))
+    :hints (("Goal" :in-theory (enable translate-bv-constant-to-smtlib2-aux)))))
 
 (defund translate-bv-constant-to-smtlib2 (val size)
   (declare (xargs :guard (and (integerp val)
@@ -264,13 +345,6 @@
                                 (smtlib2-select rhs-string-tree index)))))
 
 (local
-  (defthm string-treep-of-smtlib2-select
-    (implies (and (string-treep array)
-                  (string-treep index))
-             (string-treep (smtlib2-select array index)))
-    :hints (("Goal" :in-theory (enable smtlib2-select smtlib2-call smtlib2-call-args)))))
-
-(local
   (defthm string-treep-of-translate-array-element-equality-to-smtlib2
     (implies (and (string-treep lhs-string-tree)
                   (string-treep rhs-string-tree))
@@ -378,8 +452,8 @@
                         (mv nil constant-array-info)
                       (mv-let (lhs-pad-bits rhs-pad-bits)
                         (if (<= lhs-element-width rhs-element-width)
-                            (mv (- rhs-element-width lhs-element-width) 0)
-                          (mv 0 (- lhs-element-width rhs-element-width)))
+                            (mv (nfix (- rhs-element-width lhs-element-width)) 0)
+                          (mv 0 (nfix (- lhs-element-width rhs-element-width))))
                         (mv (translate-array-equality-to-smtlib2 (+ -1 common-len)
                                                                  lhs-string-tree
                                                                  rhs-string-tree
@@ -1478,3 +1552,5 @@
                              counterexamplep
                              print-cex-as-signedp
                              state)))
+
+(set-verify-guards-eagerness 2)

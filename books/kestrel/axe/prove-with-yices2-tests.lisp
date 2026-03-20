@@ -26,16 +26,44 @@
 (assert-equal (parse-yices2-output-objects '(SAT) t)
               *error*)
 
-(assert-equal (parse-yices2-output-objects '(SAT ((NODE0 #b00000101)
-                                                  (NODE1 TRUE)
-                                                  ((SELECT NODE2 #b00) #b00010001)
-                                                  ((SELECT NODE2 #b01) #b00010010)))
-                                           t)
-              '(*counterexample*
-                ((0 . 5)
-                 (1 . t)
-                 ((2 . 0) . 17)
-                 ((2 . 1) . 18))))
+(assert-equal (car (parse-yices2-output-objects '(SAT ((NODE0 #b00000101)
+                                                       (NODE1 TRUE)
+                                                       ((SELECT NODE2 #b00) #b00010001)
+                                                       ((SELECT NODE2 #b01) #b00010010)))
+                                                t))
+              *counterexample*)
+
+(assert-equal (cdr (assoc-equal 0
+                                (cadr (parse-yices2-output-objects '(SAT ((NODE0 #b00000101)
+                                                                          (NODE1 TRUE)
+                                                                          ((SELECT NODE2 #b00) #b00010001)
+                                                                          ((SELECT NODE2 #b01) #b00010010)))
+                                                                   t))))
+              5)
+
+(assert-equal (cdr (assoc-equal 1
+                                (cadr (parse-yices2-output-objects '(SAT ((NODE0 #b00000101)
+                                                                          (NODE1 TRUE)
+                                                                          ((SELECT NODE2 #b00) #b00010001)
+                                                                          ((SELECT NODE2 #b01) #b00010010)))
+                                                                   t))))
+              t)
+
+(assert-equal (cdr (assoc-equal '(2 . 0)
+                                (cadr (parse-yices2-output-objects '(SAT ((NODE0 #b00000101)
+                                                                          (NODE1 TRUE)
+                                                                          ((SELECT NODE2 #b00) #b00010001)
+                                                                          ((SELECT NODE2 #b01) #b00010010)))
+                                                                   t))))
+              17)
+
+(assert-equal (cdr (assoc-equal '(2 . 1)
+                                (cadr (parse-yices2-output-objects '(SAT ((NODE0 #b00000101)
+                                                                          (NODE1 TRUE)
+                                                                          ((SELECT NODE2 #b00) #b00010001)
+                                                                          ((SELECT NODE2 #b01) #b00010010)))
+                                                                   t))))
+              18)
 
 (must-prove-with-yices2 commutative-bvxor
                         '(equal (bvxor 32 x y)

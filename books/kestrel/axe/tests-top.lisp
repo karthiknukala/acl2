@@ -61,3 +61,9 @@
        (include-book "prove-with-yices2-tests")
        (include-book "prove-equal-with-axe-yices2-tests")
        :endif)
+
+(ifdef "OS_HAS_STP"
+       (ifdef "OS_HAS_YICES2"
+              (include-book "smt-backend-comparison-tests")
+              :endif)
+       :endif)

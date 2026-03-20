@@ -11,8 +11,37 @@
 (include-book "prove-with-stp")
 (include-book "prove-with-stp2")
 (include-book "translate-dag-to-smtlib2")
+(local (include-book "kestrel/arithmetic-light/ceiling" :dir :system))
+(local (include-book "kestrel/arithmetic-light/plus" :dir :system))
+(local (include-book "kestrel/arithmetic-light/plus-and-minus" :dir :system))
+(local (include-book "kestrel/arithmetic-light/floor" :dir :system))
+
+(set-verify-guards-eagerness 0)
 
 (defconst *default-yices2-timeout-secs* 60)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(local
+  (defthm rationalp-when-natp
+    (implies (natp x)
+             (rationalp x))))
+
+(local
+  (defthm <=-of-midpoint-and-max-depth
+    (implies (and (integerp min-depth)
+                  (<= 0 min-depth)
+                  (integerp max-depth)
+                  (<= 0 max-depth)
+                  (<= min-depth max-depth))
+             (<= (ceiling (+ (* 1/2 max-depth) (* 1/2 min-depth)) 1)
+                 max-depth))
+    :hints (("Goal"
+             :use ((:instance <-of-ceiling-arg2
+                              (i (+ (* 1/2 max-depth) (* 1/2 min-depth)))
+                              (j 1)
+                              (k (+ 1 max-depth))))
+             :in-theory (disable <-of-ceiling-arg2)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -103,7 +132,7 @@
           (< max-depth min-depth))
       (prog2$ (cw "No more depths to try.~%")
               (mv *timedout* state))
-    (b* ((depth (ceiling (/ (+ min-depth max-depth) 2) 1))
+    (b* ((depth min-depth)
          ((mv result state)
           (prove-disjunction-with-yices2-at-depth depth disjuncts depth-array dag-array dag-len dag-parent-array known-nodenum-type-alist
                                                   base-filename print timeout-secs counterexamplep print-cex-as-signedp state)))
@@ -112,14 +141,7 @@
         (if (eq result *valid*)
             (mv *valid* state)
           (if (eq result *timedout*)
-              (prove-disjunction-with-yices2-at-depths min-depth
-                                                       (+ -1 depth)
-                                                       depth-array
-                                                       known-nodenum-type-alist
-                                                       disjuncts
-                                                       dag-array dag-len dag-parent-array
-                                                       base-filename print timeout-secs counterexamplep print-cex-as-signedp
-                                                       state)
+              (mv *timedout* state)
             (prove-disjunction-with-yices2-at-depths (+ 1 depth)
                                                      max-depth
                                                      depth-array
@@ -470,7 +492,7 @@
     (b* ((supporters-tag-array (make-empty-array 'supporters-tag-array (+ 1 larger-nodenum)))
          (supporters-tag-array (aset1 'supporters-tag-array supporters-tag-array larger-nodenum t))
          (supporters-tag-array (aset1 'supporters-tag-array supporters-tag-array smaller-nodenum t))
-         (current-depth (integer-average-round-up min-depth max-depth))
+         (current-depth min-depth)
          ((mv erp nodenums-to-translate cut-nodenum-type-alist &)
           (gather-nodes-to-translate-up-to-depth larger-nodenum current-depth depth-array dag-array-name dag-array dag-len var-type-alist supporters-tag-array
                                                  nil
@@ -499,11 +521,7 @@
       (if (eq result *valid*)
           (mv t state)
         (if (eq result *timedout*)
-            (try-cut-equivalence-proofs-with-yices2 min-depth (+ -1 current-depth)
-                                                    depth-array
-                                                    smaller-nodenum larger-nodenum
-                                                    dag-array-name dag-array dag-len
-                                                    var-type-alist print timeout-secs base-filename state)
+            (mv nil state)
           (try-cut-equivalence-proofs-with-yices2 (+ 1 current-depth) max-depth
                                                   depth-array
                                                   smaller-nodenum larger-nodenum
@@ -565,3 +583,5 @@
           (prog2$ (cw "!! Yices2 failed to prove the equality of nodes ~x0 and ~x1. !!~%" smaller-nodenum larger-nodenum)
                   nil))
         state)))
+
+(set-verify-guards-eagerness 2)
