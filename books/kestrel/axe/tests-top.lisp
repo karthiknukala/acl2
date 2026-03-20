@@ -54,3 +54,10 @@
        (include-book "prove-with-stp-tests")
        (include-book "tactic-prover-tests")
        :endif)
+
+(ifdef "OS_HAS_YICES2"
+       (include-book "yices2-clause-processor-tests")
+       (include-book "defthm-yices2-tests")
+       (include-book "prove-with-yices2-tests")
+       (include-book "prove-equal-with-axe-yices2-tests")
+       :endif)

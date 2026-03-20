@@ -36,7 +36,9 @@
     defthm-axe
     defthm-axe-basic
     defthm-stp
+    defthm-yices2
     prove-with-stp
+    prove-with-yices2
 
     symbolic-byte-assumptions
     symbolic-list

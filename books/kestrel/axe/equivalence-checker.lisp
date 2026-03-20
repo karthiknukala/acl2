@@ -46,6 +46,7 @@
 (include-book "kestrel/lists-light/union-eql-tail" :dir :system)
 (include-book "strengthen-facts")
 (include-book "prove-with-stp2")
+(include-book "prove-with-yices2")
 (include-book "tailtohead")
 (include-book "specialize")
 (include-book "unroller")
@@ -12058,6 +12059,28 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;; The equivalence checker can use either the legacy STP/CVC path or the new
+;; SMT-LIB2/Yices2 path for its pure SMT obligations.
+(defund equivalence-checker-backendp (backend)
+  (declare (xargs :guard t))
+  (member-eq backend '(:stp :yices2)))
+
+(defund get-equivalence-checker-backend (options)
+  (declare (xargs :guard t))
+  (let ((backend (g :backend options)))
+    (if (equivalence-checker-backendp backend)
+        backend
+      :stp)))
+
+(defund get-equivalence-checker-yices2-timeout-secs (options)
+  (declare (xargs :guard t))
+  (let ((timeout-secs (g :yices2-timeout-secs options)))
+    (if (natp timeout-secs)
+        timeout-secs
+      *default-yices2-timeout-secs*)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 ;; Returns (mv provedp state).
 ;todo: consider othe proofs methods, like rewriting, using the axe-prover, using contexts (should we cut the context too -- what if the context is huge and unrelated to the goal nodes?), etc.
 ;not currently doing any of these things because we want this to be fast.
@@ -12067,7 +12090,7 @@
                                       larger-nodenum ; could either node have been replaced by a constant?
                                       miter-array-name miter-array miter-len
                                       var-type-alist
-                                      print max-conflicts miter-name state)
+                                      print max-conflicts miter-name options state)
   (declare (xargs :guard (and (natp smaller-nodenum)
                               (natp larger-nodenum)
                               (<= smaller-nodenum larger-nodenum)
@@ -12095,8 +12118,17 @@
                     ;; (- (cw "(Vars that support both nodes: ~x0.)~%" vars-that-support-both-nodes))
                     (- (and vars-that-support-only-smaller-node (cw "(Vars that support node ~x0 only: ~x1.)~%" smaller-nodenum vars-that-support-only-smaller-node)))
                     (- (and vars-that-support-only-larger-node (cw "(Vars that support node ~x0 only: ~x1.)~%" larger-nodenum vars-that-support-only-larger-node))))
-                 nil))))
-    (try-to-prove-pure-nodes-equal-with-stp smaller-nodenum larger-nodenum miter-array-name miter-array miter-len var-type-alist print max-conflicts miter-name state)))
+                 nil))
+       (backend (get-equivalence-checker-backend options)))
+    (if (eq :yices2 backend)
+        (try-to-prove-pure-nodes-equal-with-yices2 smaller-nodenum larger-nodenum
+                                                   miter-array-name miter-array miter-len
+                                                   var-type-alist
+                                                   print
+                                                   (get-equivalence-checker-yices2-timeout-secs options)
+                                                   miter-name
+                                                   state)
+      (try-to-prove-pure-nodes-equal-with-stp smaller-nodenum larger-nodenum miter-array-name miter-array miter-len var-type-alist print max-conflicts miter-name state))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -12115,7 +12147,7 @@
                                            ;; rewriter-rule-alist
                                            ;; assumptions
                                            ;; monitored-symbols
-                                           max-conflicts miter-name state)
+                                           max-conflicts miter-name options state)
   (declare (xargs :guard (and (natp nodenum)
                               (pseudo-dag-arrayp miter-array-name miter-array miter-len)
                               (< nodenum miter-len)
@@ -12190,8 +12222,17 @@
        ;; ;; The constant is okay, so call STP:
        ;; ;; TODO: Use the cutting heuristics (put in vars for uninteresting subterms)? binary search to find the cut depth?
        ;; ;; TTODO: Need to handle vars not given types in the alist (look how they are used and infer a type?)
+       (backend (get-equivalence-checker-backend options))
        ((mv result state)
-        (prove-node-is-constant-with-stp nodenum constant-value miter-array-name miter-array miter-len var-type-alist print max-conflicts miter-name state)))
+        (if (eq :yices2 backend)
+            (prove-node-is-constant-with-yices2 nodenum constant-value
+                                                miter-array-name miter-array miter-len
+                                                var-type-alist
+                                                print
+                                                (get-equivalence-checker-yices2-timeout-secs options)
+                                                miter-name
+                                                state)
+          (prove-node-is-constant-with-stp nodenum constant-value miter-array-name miter-array miter-len var-type-alist print max-conflicts miter-name state))))
     (if (eq *error* result)
         (mv (erp-t) nil state)
       (if (eq *valid* result)
@@ -15515,7 +15556,7 @@
          (mv-let (success-flg state) ;ffixme handle errors?
            ;;fffixme pass in and translate assumptions?  they may be tighter than the sizes that are apparent from how the variables are used?
            ;; TTODO: use (pure) contexts!
-           (try-to-prove-pure-nodes-equal smaller-nodenum larger-nodenum miter-array-name miter-array miter-len var-type-alist print max-conflicts miter-name state)
+           (try-to-prove-pure-nodes-equal smaller-nodenum larger-nodenum miter-array-name miter-array miter-len var-type-alist print max-conflicts miter-name options state)
            (if success-flg
                (mv (erp-nil) :proved analyzed-function-table nodenums-not-to-unroll rand state)
              ;; fixme would like to get a counterexample back and use it try to invalidate more "probable facts":
@@ -15690,7 +15731,7 @@
          (mv-let (erp provedp state)
            (try-to-prove-pure-node-is-constant constant-value nodenum miter-array-name miter-array miter-len var-type-alist print
                                                ;; interpreted-function-alist rewriter-rule-alist assumptions monitored-symbols
-                                               max-conflicts miter-name state)
+                                               max-conflicts miter-name options state)
            (if erp
                (mv erp nil analyzed-function-table rand state)
              (if provedp
@@ -16064,7 +16105,10 @@
                                (not (eq 'dag-array miter-array-name)))
                    :mode :program :stobjs (rand state)))
    ;;ffixme what if the miter is a constant?? maybe not possible..
-   (b* ((- (cw "(Sweep ~x0 (depth ~x1, max-conflicts ~x2) for ~x3 (~x4 nodes).~%" sweep-num miter-depth max-conflicts miter-name miter-len))
+   (b* ((backend (get-equivalence-checker-backend options))
+        (- (if (eq :yices2 backend)
+               (cw "(Sweep ~x0 (depth ~x1, timeout-secs ~x2) for ~x3 (~x4 nodes).~%" sweep-num miter-depth (get-equivalence-checker-yices2-timeout-secs options) miter-name miter-len)
+             (cw "(Sweep ~x0 (depth ~x1, max-conflicts ~x2) for ~x3 (~x4 nodes).~%" sweep-num miter-depth max-conflicts miter-name miter-len)))
         (- (cw "(Assumptions:~%~x0)~%" assumptions))
         ;;also, maybe pass around and print the refined assumptions??
         (state (if (print-level-at-least-tp print)
@@ -16742,6 +16786,8 @@
                          (mv (erp-t) nil rand state)))))
          ;; Not a constant;
          (b* ((dag dag-or-quotep)
+              (backend (get-equivalence-checker-backend options))
+              (yices2-timeout-secs (get-equivalence-checker-yices2-timeout-secs options))
               (miter-array-name (pack$ 'miter-array- miter-depth))
               (miter-array (make-into-array miter-array-name dag)) ;call a -with-len version?
               (miter-len (len dag))
@@ -16826,39 +16872,71 @@
                     (if (not must-succeedp)
                         (prog2$ (cw "(Failing because we don't have to succeed on this goal.))")
                                 (mv nil nil rand state))
-                      (if (not max-conflicts)
-                          (prog2$ (cw "(Failing because we would normally increase the max-conflicts but timing out is turned off.))")
-                                  (mv nil nil rand state))
-                        (if (< 10000000000 max-conflicts) ;; not sure what the limit should be but 2^64 causes an STP error
-                            (prog2$ (cw "(Failing because the max-conflicts is too high.))")
+                      (if (eq :yices2 backend)
+                          (if (< 10000000000 yices2-timeout-secs)
+                              (prog2$ (cw "(Failing because the Yices2 timeout is too high.))")
+                                      (mv nil nil rand state))
+                            (let* ((yices2-timeout-secs (* 2 yices2-timeout-secs))
+                                   (options (s :yices2-timeout-secs yices2-timeout-secs options)))
+                              (prog2$ (cw "(Increasing the Yices2 timeout to ~x0 seconds and trying again.)~%" yices2-timeout-secs)
+                                      (mv-let (erp provedp rand state)
+                                        (miter-and-merge miter-dag
+                                                         miter-name
+                                                         miter-depth
+                                                         var-type-alist
+                                                         interpreted-function-alist
+                                                         print
+                                                         debug-nodes
+                                                         rewriter-rule-alist
+                                                         prover-rule-alist
+                                                         assumptions
+                                                         extra-stuff
+                                                         test-cases
+                                                         monitored-symbols
+                                                         use-context-when-miteringp
+                                                         analyzed-function-table
+                                                         unroll
+                                                         tests-per-case
+                                                         max-conflicts must-succeedp
+                                                         pre-simplify-rec-fnsp
+                                                         normalize-xors
+                                                         options
+                                                         rand state)
+                                        (prog2$ (cw "End of proof attempt for ~x0)~%"  miter-name)
+                                                (mv erp provedp rand state))))))
+                        (if (not max-conflicts)
+                            (prog2$ (cw "(Failing because we would normally increase the max-conflicts but timing out is turned off.))")
                                     (mv nil nil rand state))
-                          (let ((max-conflicts (* 2 max-conflicts))) ;; TODO: Don't do this if no queries timed out
-                            (prog2$ (cw "(Increasing the max-conflicts to ~x0 and trying again.)~%" max-conflicts)
-                                    (mv-let (erp provedp rand state)
-                                      (miter-and-merge miter-dag
-                                                       miter-name ;fixme change this to indicate the increased max-conflicts?
-                                                       miter-depth
-                                                       var-type-alist
-                                                       interpreted-function-alist
-                                                       print
-                                                       debug-nodes
-                                                       rewriter-rule-alist
-                                                       prover-rule-alist
-                                                       assumptions
-                                                       extra-stuff
-                                                       test-cases
-                                                       monitored-symbols
-                                                       use-context-when-miteringp
-                                                       analyzed-function-table
-                                                       unroll
-                                                       tests-per-case
-                                                       max-conflicts must-succeedp
-                                                       pre-simplify-rec-fnsp
-                                                       normalize-xors
-                                                       options
-                                                       rand state)
-                                      (prog2$ (cw "End of proof attempt for ~x0)~%"  miter-name)
-                                              (mv erp provedp rand state)))))))))
+                          (if (< 10000000000 max-conflicts) ;; not sure what the limit should be but 2^64 causes an STP error
+                              (prog2$ (cw "(Failing because the max-conflicts is too high.))")
+                                      (mv nil nil rand state))
+                            (let ((max-conflicts (* 2 max-conflicts))) ;; TODO: Don't do this if no queries timed out
+                              (prog2$ (cw "(Increasing the max-conflicts to ~x0 and trying again.)~%" max-conflicts)
+                                      (mv-let (erp provedp rand state)
+                                        (miter-and-merge miter-dag
+                                                         miter-name ;fixme change this to indicate the increased max-conflicts?
+                                                         miter-depth
+                                                         var-type-alist
+                                                         interpreted-function-alist
+                                                         print
+                                                         debug-nodes
+                                                         rewriter-rule-alist
+                                                         prover-rule-alist
+                                                         assumptions
+                                                         extra-stuff
+                                                         test-cases
+                                                         monitored-symbols
+                                                         use-context-when-miteringp
+                                                         analyzed-function-table
+                                                         unroll
+                                                         tests-per-case
+                                                         max-conflicts must-succeedp
+                                                         pre-simplify-rec-fnsp
+                                                         normalize-xors
+                                                         options
+                                                         rand state)
+                                        (prog2$ (cw "End of proof attempt for ~x0)~%"  miter-name)
+                                                (mv erp provedp rand state))))))))))
                  (b* ((- (cw "(Splitting goal on node ~x0.)~%" nodenum-to-split-on))
                       (split-assumption (dag-to-term-aux-array miter-array-name miter-array nodenum-to-split-on)) ;fffixme this can blow up if there's nothing small to split on!
                       ;;(split-assumption (orient-equality2 split-assumption)) ;too aggressive? ;handle nots and known preds? ;Fri Feb 26 01:48:01 2010
@@ -17011,6 +17089,8 @@
                             max-conflicts
                             normalize-xors ; todo: use this more, deeper in?
                             prove-constants
+                            backend
+                            yices2-timeout-secs
                             proof-name     ; should no longer be :auto
                             state)
   (declare (xargs :guard (and (or (quotep dag-or-quotep)
@@ -17052,6 +17132,8 @@
                                   (natp max-conflicts))
                               (booleanp normalize-xors) ; todo: support :compact
                               (booleanp prove-constants)
+                              (equivalence-checker-backendp backend)
+                              (natp yices2-timeout-secs)
                               (symbolp proof-name))
                   :mode :program
                   :stobjs state))
@@ -17262,7 +17344,9 @@
                                  pre-simplify-rec-fnsp
                                  normalize-xors
                                  ;; could move more stuff into these options:
-                                 (s :prove-constants prove-constants nil)
+                                 (s :backend backend
+                                    (s :yices2-timeout-secs yices2-timeout-secs
+                                       (s :prove-constants prove-constants nil)))
                                  rand state)
                 (mv erp provedp state))))
            ((when erp) (mv erp nil nil state)))
@@ -17303,6 +17387,8 @@
                           max-conflicts
                           normalize-xors
                           prove-constants
+                          backend
+                          yices2-timeout-secs
                           proof-name
                           keep-temp-dir whole-form state)
   (declare (xargs :guard (and ;; dag-or-term is a dag or (untranslated) term
@@ -17347,6 +17433,8 @@
                                   (natp max-conflicts))
                               (booleanp normalize-xors)
                               (booleanp prove-constants)
+                              (equivalence-checker-backendp backend)
+                              (natp yices2-timeout-secs)
                               (symbolp proof-name)
                               (member-eq keep-temp-dir '(t nil :auto)))
                   :mode :program
@@ -17394,6 +17482,8 @@
                              max-conflicts
                              normalize-xors
                              prove-constants
+                             backend
+                             yices2-timeout-secs
                              proof-name state))
        ;; Remove the temp-dir (usually):
        (state (maybe-remove-temp-dir2 keep-temp-dir erp nil state))
@@ -17448,6 +17538,8 @@
                            (unroll 'nil) ;fixme make :all the default (or should we use t instead of all?)
                            (tests-per-case '512)
                            (max-conflicts ':auto) ;initial value to use for max-conflicts (may be increased when there's nothing else to do), nil would mean don't use max-conflicts
+                           (backend ':stp)
+                           (yices2-timeout-secs '*default-yices2-timeout-secs*)
                            (normalize-xors 't)
                            (prove-constants 't) ;whether to attempt to prove probably-constant nodes
                            (proof-name ':auto)
@@ -17460,7 +17552,7 @@
        (prove-with-axe-fn ,dag-or-quotep ,assumptions ,types ,interpreted-function-alist ,test-types
                           ,tests ,tactic ,print ,debug-nodes ,runes ,rules ,rewriter-runes ,prover-runes
                           ,initial-rule-set ,initial-rule-sets ,pre-simplify-rec-fns ,extra-stuff ,specialize-fnsp ,monitor ,use-context-when-miteringp
-                          ,random-seed ,unroll ,tests-per-case ,max-conflicts ,normalize-xors ,prove-constants ,proof-name ,keep-temp-dir
+                          ,random-seed ,unroll ,tests-per-case ,max-conflicts ,normalize-xors ,prove-constants ,backend ,yices2-timeout-secs ,proof-name ,keep-temp-dir
                           ',whole-form state)
        ;; ;; Can't call prove-with-axe-fn directly here, because it returns extra
        ;; ;; stobjs (does not return an error triple), so we use trans-eval as
@@ -17507,6 +17599,7 @@
                                  monitored-symbols use-context-when-miteringp
                                  random-seed unroll tests-per-case
                                  max-conflicts normalize-xors prove-constants
+                                 backend yices2-timeout-secs
                                  proof-name
                                  keep-temp-dir
                                  check-vars
@@ -17552,6 +17645,8 @@
                                   (natp max-conflicts))
                               (booleanp normalize-xors)
                               (booleanp prove-constants)
+                              (equivalence-checker-backendp backend)
+                              (natp yices2-timeout-secs)
                               (symbolp proof-name)
                               (member-eq keep-temp-dir '(t nil :auto))
                               (member-eq check-vars '(t nil :warn)))
@@ -17608,6 +17703,8 @@
                              max-conflicts
                              normalize-xors
                              prove-constants
+                             backend
+                             yices2-timeout-secs
                              proof-name state))
        ;; Remove the temp-dir (usually):
        (state (maybe-remove-temp-dir2 keep-temp-dir erp nil state))
@@ -17661,6 +17758,8 @@
                                   (unroll 'nil) ;fixme make :all the default (or should we use t instead of all?)
                                   (tests-per-case '512)
                                   (max-conflicts ':auto) ;initial value to use for max-conflicts (may be increased when there's nothing else to do), nil would mean don't use max-conflicts
+                                  (backend ':stp)
+                                  (yices2-timeout-secs '*default-yices2-timeout-secs*)
                                   (normalize-xors 't)
                                   (prove-constants 't) ;whether to attempt to prove probably-constant nodes
                                   (proof-name ':auto)
@@ -17677,6 +17776,7 @@
                                  ,monitor ,use-context-when-miteringp
                                  ,random-seed ,unroll ,tests-per-case
                                  ,max-conflicts ,normalize-xors ,prove-constants
+                                 ,backend ,yices2-timeout-secs
                                  ,proof-name
                                  ,keep-temp-dir
                                  ,check-vars
@@ -17708,6 +17808,7 @@
                                 random-seed
                                 ;;;
                                 max-conflicts normalize-xors prove-constants
+                                backend yices2-timeout-secs
                                 proof-name  ; may be :auto
                                 keep-temp-dir
                                 check-vars
@@ -17745,6 +17846,8 @@
                                (natp random-seed))
                            (booleanp normalize-xors)
                            (booleanp prove-constants)
+                           (equivalence-checker-backendp backend)
+                           (natp yices2-timeout-secs)
                            (symbolp proof-name)
                            (member-eq keep-temp-dir '(t nil :auto))
                            (member-eq check-vars '(t nil :warn))
@@ -17816,6 +17919,8 @@
                              max-conflicts
                              normalize-xors
                              prove-constants
+                             backend
+                             yices2-timeout-secs
                              proof-name state))
        ;; Remove the temp-dir (usually):
        (state (maybe-remove-temp-dir2 keep-temp-dir erp nil state))
@@ -17870,6 +17975,8 @@
                                     (use-context-when-miteringp 'nil) ;todo: try t
                                     (random-seed 'nil)
                                     (max-conflicts ':auto) ;1000 here broke proofs
+                                    (backend ':stp)
+                                    (yices2-timeout-secs '*default-yices2-timeout-secs*)
                                     (normalize-xors 't)
                                     (prove-constants 't)
                                     (proof-name ':auto) ;the name of the proof, if we care to give it one.  also used for the name of the theorem.  :auto means try to create a name from the defconsts provided
@@ -17884,6 +17991,7 @@
                                 ,print ,debug-nodes ,extra-rules ,remove-rules ,initial-rule-sets
                                 ,monitor ,use-context-when-miteringp ,random-seed
                                 ,max-conflicts ,normalize-xors ,prove-constants
+                                ,backend ,yices2-timeout-secs
                                 ,proof-name ,keep-temp-dir ,check-vars
                                 ,prove-theorem ,local ',whole-form state)
        ;; The acl2-unwind-protect ensures that this is called if the user interrupts:
@@ -17910,6 +18018,8 @@
          (use-context-when-miteringp "Whether to use over-arching context when rewriting nodes (causes memoization to be turned off)")
          (random-seed "Seed for the random number generator used to make test cases, or nil meaning use the default.")
          (max-conflicts "Initial value of STP max-conflicts (number of conflicts), or :auto (meaning use the default of 60000), or nil (meaning no maximum).")
+         (backend "SMT backend to use for pure SMT obligations.  Supported values are :stp and :yices2.")
+         (yices2-timeout-secs "Initial Yices2 timeout, in seconds, used when :backend is :yices2.")
          (normalize-xors "Whether to normalize XOR nests when simplifying")
          (prove-constants "Whether, when sweeping, to try to prove nodes are constants (and replace them with those constants if the proof succeeds).")
          (proof-name "A name to assign to the proof, if desired.  A symbol, or :auto to let Axe choose a name.")

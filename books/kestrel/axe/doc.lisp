@@ -118,6 +118,11 @@ See <a href=\"https://www.kestrel.edu/research/axe/\">the Axe webpage</a> for mo
   :short "A defthm-like tool that uses the STP solver."
   :long "See @('defthm-stp.lisp').")
 
+(defxdoc defthm-yices2
+  :parents (axe-core axe-provers)
+  :short "A defthm-like tool that uses the Yices2 solver via SMT-LIB2."
+  :long "See @('defthm-yices2.lisp').")
+
 ;; todo: defconst-computed2, etc.
 
 ;; todo: prove-with-tactics, prove-equal-with-tactics, query
@@ -143,6 +148,15 @@ Different versions of STP support different option syntax, especially for the ma
 For the latest version of STP, which supports new helpful options, set @('ACL2_STP_VARIETY') to \"3\".
 
 To test whether STP is being called correctly in your environment, run the script @('[books]/kestrel/axe/teststp.bash') with no arguments.  Its output should include the string @('\"Valid.\"') if STP is being correctly invoked."))
+
+(defxdoc yices2
+  :parents (axe-core)
+  :short "An SMT solver used by the Axe toolkit via SMT-LIB2."
+  :long (xdoc::topparas "Yices2 is an SMT solver available <a href='https://yices.csl.sri.com/'>here</a>.
+  The Axe toolkit can call Yices2 using SMT-LIB2 for pure bit-vector and array obligations.
+  See @(tsee build::cert_param) for information on suppressing attempts to use Yices2 during builds.
+
+To test whether Yices2 is being called correctly in your environment, run the script @('[books]/kestrel/axe/testyices2.bash') with no arguments.  Its output should include the string @('\"unsat\"') if Yices2 is being correctly invoked."))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

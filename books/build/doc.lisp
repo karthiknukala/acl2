@@ -1434,6 +1434,11 @@ certification using @('make')."
  of STP, even when an executable for it seems to be available, set environment
  variable @('ACL2_DONT_USE_STP') to any non-empty value)</li>
 
+ <li>@('uses-yices2'): only certify when Yices2 (an SMT solver available <a href=
+ 'https://yices.csl.sri.com/'>here</a>) is available (to suppress the use
+ of Yices2, even when an executable for it seems to be available, set environment
+ variable @('ACL2_DONT_USE_YICES2') to any non-empty value)</li>
+
  <li>@('uses-quicklisp'): only certify when quicklisp is available</li>
 
  <li>@('uses-gcc-c17'): only certify when GCC is available with @('-std=c17').
@@ -1466,6 +1471,7 @@ certification using @('make')."
 (acl2::defpointer uses-ipasir cert_param)
 (acl2::defpointer uses-smtlink cert_param)
 (acl2::defpointer uses-stp cert_param)
+(acl2::defpointer uses-yices2 cert_param)
 (acl2::defpointer uses-quicklisp cert_param)
 
 (acl2::defpointer uses-gcc-c17 cert_param)

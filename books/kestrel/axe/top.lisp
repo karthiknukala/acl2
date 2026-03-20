@@ -269,6 +269,13 @@
 (include-book "stp-clause-processor")
 (include-book "defthm-stp")
 
+;; SMT-LIB2/Yices2-related stuff:
+(include-book "translate-dag-to-smtlib2")
+(include-book "prove-with-yices2")
+(include-book "prove-with-yices2-tester")
+(include-book "yices2-clause-processor")
+(include-book "defthm-yices2")
+
 ;; Legacy Axe utilities (many of these depend on skip-proofs):
 (include-book "evaluator-support")
 (include-book "evaluator")

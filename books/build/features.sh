@@ -170,6 +170,22 @@ EXPORTED_VARS += OS_HAS_STP
 EOF
 fi
 
+echo "Determining whether Yices2 is installed" 1>&2
+if yices-smt2 --version 2> /dev/null;
+then
+    if [ -z "${ACL2_DONT_USE_YICES2}" ];
+    then
+        USE_YICES2="YES"
+    fi
+fi
+if [ -n "${USE_YICES2}" ];
+then
+    cat >> Makefile-features <<EOF
+export OS_HAS_YICES2 ?= 1
+EXPORTED_VARS += OS_HAS_YICES2
+EOF
+fi
+
 echo "Determining whether GCC is installed and supports the c17 standard" 1>&2
 if gcc -std=c17 -x c -c /dev/null -o /dev/null 2>/dev/null;
 then
